@@ -1,0 +1,13 @@
+# Secrets (do not commit)
+.env
+.env.*
+*.local
+
+# OS / tooling
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Node
+node_modules/
+dist/
