@@ -49,7 +49,7 @@ function attachToLastUser(contents, attachments) {
   last.parts = Array.isArray(last.parts) ? last.parts : [];
 
   last.parts.push({
-    text: "\n\nUse the attached files below to answer the user’s request. Quote relevant excerpts when helpful.",
+    text: "\n\nUse the attached files below to answer the user's request. Quote relevant excerpts when helpful.",
   });
 
   for (const a of attachments) {
@@ -98,7 +98,9 @@ export default async function handler(req, res) {
 
   const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : DEFAULT_MODEL;
   const persona =
-    typeof payload.systemPersona === "string" && payload.systemPersona.trim() ? payload.systemPersona.trim() : DEFAULT_PERSONA;
+    typeof payload.systemPersona === "string" && payload.systemPersona.trim()
+      ? payload.systemPersona.trim()
+      : DEFAULT_PERSONA;
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
 
@@ -116,7 +118,7 @@ export default async function handler(req, res) {
     generationConfig: {
       temperature: 0.35,
       topP: 0.9,
-      maxOutputTokens: 1024,
+      maxOutputTokens: 8192, // FIX: was 1024, now 8192 for full responses
     },
   };
 
@@ -141,4 +143,3 @@ export default async function handler(req, res) {
     json(res, 500, { error: "Server exception", message: String(e?.message || e) });
   }
 }
-

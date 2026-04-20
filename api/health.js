@@ -22,4 +22,3 @@ export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   res.end(JSON.stringify({ ok: hasKey, message: hasKey ? "Ready" : "Missing GEMINI_API_KEY env var" }));
 }
-
