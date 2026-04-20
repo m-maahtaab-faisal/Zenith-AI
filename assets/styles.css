@@ -36,22 +36,23 @@ body {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(1200px 600px at 15% 10%, rgba(34, 211, 238, 0.1), transparent 60%),
-    radial-gradient(900px 520px at 85% 15%, rgba(139, 92, 246, 0.12), transparent 60%),
-    radial-gradient(900px 520px at 60% 95%, rgba(96, 165, 250, 0.08), transparent 60%);
-  filter: saturate(1.08);
+    radial-gradient(1100px 700px at 18% 8%, rgba(43, 115, 255, 0.14), transparent 60%),
+    radial-gradient(900px 540px at 82% 18%, rgba(139, 92, 246, 0.10), transparent 62%),
+    radial-gradient(900px 540px at 60% 92%, rgba(34, 211, 238, 0.06), transparent 62%),
+    radial-gradient(900px 540px at 50% 50%, rgba(255, 255, 255, 0.03), transparent 60%);
+  filter: saturate(1.02);
 }
 
 .glass {
-  background: var(--panel);
-  border: 1px solid var(--edge);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.085);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
 
 .glass-strong {
-  background: var(--panel2);
-  border: 1px solid var(--edge2);
+  background: rgba(255, 255, 255, 0.065);
+  border: 1px solid rgba(255, 255, 255, 0.11);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
 }
@@ -179,6 +180,16 @@ body {
   -webkit-backdrop-filter: blur(12px);
   color: rgba(255, 255, 255, 0.82);
 }
+
+/* Less “gamey” motion: reduce intensity for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 .copy-btn:hover {
   background: rgba(255, 255, 255, 0.09);
 }
@@ -226,4 +237,3 @@ body {
     transform: translateY(-2px);
   }
 }
-

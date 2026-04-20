@@ -1,7 +1,7 @@
 import { MODEL, PERSONAS, STORAGE } from "./constants.js";
 import { qs } from "./dom.js";
 import { escHtml, estTokens, formatElapsed, bytesToHuman } from "./utils.js";
-import { downloadExport, buildExportMarkdown } from "./export.js";
+import { buildExportMarkdown, downloadExport } from "./export.js";
 import { renderAssistantMarkdown } from "./markdown.js";
 import { sendChatToServer, serverHealthCheck } from "./api.js";
 import { addMessageBubble, ensureAtBottom, setConnectionStatus, sidebarOpen } from "./ui.js";
@@ -9,11 +9,18 @@ import { parseFilesToAttachments, attachmentSummary } from "./attachments.js";
 
 marked.setOptions({ gfm: true, breaks: true });
 
+const SESSIONS_KEY = "zenith_elite_sessions_v2";
+
 const el = {
   chat: qs("#chat"),
   prompt: qs("#prompt"),
   sendBtn: qs("#sendBtn"),
   stopBtn: qs("#stopBtn"),
+  attachBtn: qs("#attachBtn"),
+  fileInput: qs("#fileInput"),
+  attachmentsWrap: qs("#attachments"),
+  attachmentChips: qs("#attachmentChips"),
+
   statusPill: qs("#statusPill"),
   connDot: qs("#connDot"),
   connText: qs("#connText"),
@@ -24,24 +31,19 @@ const el = {
   sidebar: qs("#sidebar"),
   drawerBackdrop: qs("#drawerBackdrop"),
 
+  newSessionBtn: qs("#newSessionBtn"),
+  sessionsList: qs("#sessionsList"),
+
+  servicePanel: qs("#servicePanel"),
   serverTestBtn: qs("#serverTestBtn"),
   serverStatus: qs("#serverStatus"),
 
   personaSelect: qs("#personaSelect"),
   personaHint: qs("#personaHint"),
 
-  newSessionBtn: qs("#newSessionBtn"),
   copyMdBtn: qs("#copyMdBtn"),
   downloadMdBtn: qs("#downloadMdBtn"),
 
-  attachBtn: qs("#attachBtn"),
-  fileInput: qs("#fileInput"),
-  attachmentsWrap: qs("#attachments"),
-  attachmentChips: qs("#attachmentChips"),
-
-  statMessages: qs("#statMessages"),
-  statTokens: qs("#statTokens"),
-  statLatency: qs("#statLatency"),
   statElapsed: qs("#statElapsed"),
 };
 
@@ -51,12 +53,26 @@ const state = {
   busy: false,
   abort: null,
   stopRequested: false,
-  messages: [],
+
   startedAt: Date.now(),
-  latencySamples: [],
   personaId: "general",
   attachments: [],
+
+  sessions: [],
+  activeSessionId: "",
 };
+
+function setBusy(busy) {
+  state.busy = busy;
+  el.sendBtn.disabled = busy;
+  if (busy) {
+    el.stopBtn.classList.remove("hidden");
+    setConnectionStatus(el, "busy", "Generating…");
+  } else {
+    el.stopBtn.classList.add("hidden");
+    setConnectionStatus(el, "ok", "Online");
+  }
+}
 
 function setServerStatus(msg, kind = "info") {
   const color =
@@ -67,32 +83,8 @@ function setServerStatus(msg, kind = "info") {
         : kind === "warn"
           ? "text-amber-300"
           : "text-white/60";
-  el.serverStatus.className = `mt-3 text-xs ${color}`;
+  el.serverStatus.className = `mt-2 text-xs ${color}`;
   el.serverStatus.textContent = msg;
-}
-
-function setBusy(busy) {
-  state.busy = busy;
-  el.sendBtn.disabled = busy;
-  if (busy) {
-    el.stopBtn.classList.remove("hidden");
-    setConnectionStatus(el, "busy", "Generating…");
-  } else {
-    el.stopBtn.classList.add("hidden");
-    setConnectionStatus(el, "ok", "Server mode");
-  }
-}
-
-function updateStats() {
-  const msgCount = state.messages.filter((m) => m.role !== "system").length;
-  el.statMessages.textContent = String(msgCount);
-  const tokenSum = state.messages.reduce((acc, m) => acc + (m.tokens || 0), 0);
-  el.statTokens.textContent = String(tokenSum);
-  const avg =
-    state.latencySamples.length > 0
-      ? state.latencySamples.reduce((a, b) => a + b, 0) / state.latencySamples.length
-      : null;
-  el.statLatency.textContent = avg ? `${Math.round(avg)}ms` : "—";
 }
 
 function autoSize() {
@@ -103,17 +95,14 @@ function autoSize() {
 
 function loadPersona() {
   const saved = localStorage.getItem(STORAGE.persona);
-  if (saved && PERSONAS[saved]) state.personaId = saved;
-  else state.personaId = "general";
+  state.personaId = PERSONAS[saved] ? saved : "general";
   el.personaSelect.value = state.personaId;
   updatePersonaHint();
 }
 
 function updatePersonaHint() {
   el.personaHint.textContent =
-    state.personaId === "architect"
-      ? "Elite engineering + architecture tone."
-      : "Balanced general-purpose assistant.";
+    state.personaId === "architect" ? "Sharper engineering mode." : "General-purpose assistant.";
 }
 
 function savePersona(nextId) {
@@ -122,17 +111,108 @@ function savePersona(nextId) {
   updatePersonaHint();
 }
 
-function newSession() {
-  state.messages = [];
-  state.latencySamples = [];
-  state.startedAt = Date.now();
+function persistSessions() {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(state.sessions));
+  } catch {}
+}
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.sessions = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    state.sessions = [];
+  }
+  if (state.sessions.length === 0) createSession();
+  if (!state.activeSessionId) state.activeSessionId = state.sessions[0].id;
+  renderSessionsList();
+  switchSession(state.activeSessionId);
+}
+
+function titleFromMessages(messages) {
+  const firstUser = (messages || []).find((m) => m.role === "user" && m.content);
+  const t = String(firstUser?.content || "New chat").trim();
+  return t.length > 42 ? `${t.slice(0, 42)}…` : t;
+}
+
+function updateSessionMeta(session) {
+  session.updatedAt = Date.now();
+  session.messageCount = (session.messages || []).filter((m) => m.role !== "system").length;
+  if (!session.title || session.title === "New chat") session.title = titleFromMessages(session.messages);
+  session.personaId = state.personaId;
+}
+
+function createSession() {
+  const now = Date.now();
+  const s = {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    createdAt: now,
+    updatedAt: now,
+    personaId: state.personaId,
+    messages: [],
+    messageCount: 0,
+  };
+  state.sessions.unshift(s);
+  state.activeSessionId = s.id;
+  persistSessions();
+  renderSessionsList();
+  return s;
+}
+
+function getActiveSession() {
+  return state.sessions.find((s) => s.id === state.activeSessionId) || null;
+}
+
+function renderSessionsList() {
+  el.sessionsList.innerHTML = "";
+  const ordered = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  for (const s of ordered) {
+    const active = s.id === state.activeSessionId;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "w-full text-left rounded-2xl px-3 py-2 border border-white/10 transition " +
+      (active ? "bg-white/10" : "glass hover:bg-white/10");
+    btn.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-xs font-medium truncate ${active ? "text-white/90" : "text-white/80"}">${escHtml(s.title || "New chat")}</div>
+          <div class="mt-0.5 text-[11px] text-white/45 truncate">${s.messageCount ?? 0} messages</div>
+        </div>
+        <div class="shrink-0 h-2 w-2 rounded-full ${active ? "bg-emerald-400" : "bg-white/20"}"></div>
+      </div>
+    `;
+    btn.addEventListener("click", () => switchSession(s.id));
+    el.sessionsList.appendChild(btn);
+  }
+}
+
+function switchSession(id) {
+  const s = state.sessions.find((x) => x.id === id);
+  if (!s) return;
+  state.activeSessionId = id;
+  state.personaId = PERSONAS[s.personaId] ? s.personaId : "general";
+  el.personaSelect.value = state.personaId;
+  updatePersonaHint();
   clearAttachments();
 
-  const nodes = Array.from(el.chat.children);
+  // Keep initial assistant bubble (first child) then render messages.
+  const first = el.chat.children[0] ? el.chat.children[0].cloneNode(true) : null;
   el.chat.innerHTML = "";
-  if (nodes[0]) el.chat.appendChild(nodes[0]);
+  if (first) el.chat.appendChild(first);
+
+  for (const m of s.messages || []) {
+    if (m.role === "user") addMessageBubble(el.chat, { role: "user", label: "You", text: m.content });
+    else if (m.role === "assistant") {
+      const b = addMessageBubble(el.chat, { role: "assistant", label: "Zenith", html: "" });
+      renderAssistantMarkdown(b.body, m.content);
+    }
+  }
   ensureAtBottom(el.chat);
-  updateStats();
+  renderSessionsList();
 }
 
 function renderAttachmentChips() {
@@ -153,8 +233,7 @@ function renderAttachmentChips() {
       <span class="text-white/45">${meta ? escHtml(meta) : ""}</span>
       <button type="button" class="ml-1 text-white/60 hover:text-white/85" aria-label="Remove attachment">✕</button>
     `;
-    const btn = chip.querySelector("button");
-    btn.addEventListener("click", () => {
+    chip.querySelector("button").addEventListener("click", () => {
       state.attachments = state.attachments.filter((a) => a.id !== att.id);
       renderAttachmentChips();
     });
@@ -172,8 +251,7 @@ async function addAttachmentsFromFileList(fileList) {
   const files = Array.from(fileList || []);
   if (files.length === 0) return;
   try {
-    const next = await parseFilesToAttachments(files, state.attachments);
-    state.attachments = next;
+    state.attachments = await parseFilesToAttachments(files, state.attachments);
     renderAttachmentChips();
   } catch (e) {
     addMessageBubble(el.chat, {
@@ -191,22 +269,13 @@ async function sendMessage() {
   if (!text && state.attachments.length === 0) return;
   if (state.busy) return;
 
+  const session = getActiveSession() || createSession();
+
   el.prompt.value = "";
   autoSize();
 
-  const attachmentLine =
-    state.attachments.length > 0
-      ? `\n\n[Attachments: ${state.attachments.map((a) => a.name).join(", ")}]`
-      : "";
-
   const userContent = text || "Analyze the attached files.";
-  state.messages.push({
-    role: "user",
-    content: userContent + attachmentLine,
-    ts: Date.now(),
-    tokens: estTokens(userContent),
-  });
-
+  session.messages.push({ role: "user", content: userContent, ts: Date.now(), tokens: estTokens(userContent) });
   addMessageBubble(el.chat, { role: "user", label: "You", text: userContent });
 
   if (state.attachments.length > 0) {
@@ -219,7 +288,9 @@ async function sendMessage() {
     });
   }
 
-  updateStats();
+  updateSessionMeta(session);
+  persistSessions();
+  renderSessionsList();
 
   const assistant = addMessageBubble(el.chat, {
     role: "assistant",
@@ -229,37 +300,36 @@ async function sendMessage() {
   });
 
   setBusy(true);
-  const t0 = performance.now();
   state.abort = new AbortController();
   state.stopRequested = false;
 
+  const t0 = performance.now();
   try {
     const reply = await sendChatToServer({
-      messages: state.messages,
+      messages: session.messages,
       systemPersona: PERSONAS[state.personaId],
       attachments: state.attachments,
     });
-
     if (state.stopRequested) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
 
     renderAssistantMarkdown(assistant.body, reply);
-
-    const dt = Math.round(performance.now() - t0);
-    state.latencySamples.push(dt);
-    state.messages.push({ role: "assistant", content: reply, ts: Date.now(), tokens: estTokens(reply) });
-    updateStats();
+    session.messages.push({ role: "assistant", content: reply, ts: Date.now(), tokens: estTokens(reply) });
+    updateSessionMeta(session);
+    persistSessions();
+    renderSessionsList();
     clearAttachments();
   } catch (e) {
     const isAbort = state.stopRequested || String(e?.name || "").toLowerCase().includes("abort");
     if (isAbort) {
       assistant.body.innerHTML = `<div class="text-xs text-white/60">Stopped.</div>`;
-      setConnectionStatus(el, "ok", "Server mode");
     } else {
       const msg = String(e?.message || e);
       assistant.body.innerHTML =
         `<div class="text-rose-200 text-sm">Generation failed.</div>` +
         `<div class="mt-2 text-xs text-white/60">${escHtml(msg)}</div>`;
-      setConnectionStatus(el, "warn", "Server error");
+      setConnectionStatus(el, "warn", "Service error");
+      el.servicePanel.classList.remove("hidden");
+      setServerStatus(msg.includes("Missing GEMINI_API_KEY") ? "Owner action: set GEMINI_API_KEY in Vercel → Project → Settings → Environment Variables, then redeploy." : msg, "warn");
     }
   } finally {
     setBusy(false);
@@ -267,6 +337,11 @@ async function sendMessage() {
     state.stopRequested = false;
     ensureAtBottom(el.chat);
   }
+
+  const dt = Math.round(performance.now() - t0);
+  // Keep a tiny “elapsed since app open” for a subtle sense of continuity
+  if (el.statElapsed) el.statElapsed.textContent = formatElapsed(Date.now() - state.startedAt);
+  void dt;
 }
 
 function stopGeneration() {
@@ -298,26 +373,28 @@ document.addEventListener("keydown", (e) => {
 
 el.sendBtn.addEventListener("click", sendMessage);
 el.stopBtn.addEventListener("click", stopGeneration);
-el.newSessionBtn.addEventListener("click", newSession);
 
 // Attachments
 el.attachBtn.addEventListener("click", () => el.fileInput.click());
 el.fileInput.addEventListener("change", async () => {
   await addAttachmentsFromFileList(el.fileInput.files);
 });
-
-// Drag & drop files onto the chat area
-el.chat.addEventListener("dragover", (e) => {
-  e.preventDefault();
-});
+el.chat.addEventListener("dragover", (e) => e.preventDefault());
 el.chat.addEventListener("drop", async (e) => {
   e.preventDefault();
   if (e.dataTransfer?.files?.length) await addAttachmentsFromFileList(e.dataTransfer.files);
 });
 
+// Sessions
+el.newSessionBtn.addEventListener("click", () => {
+  createSession();
+  switchSession(state.activeSessionId);
+});
+
 // Export
 el.copyMdBtn.addEventListener("click", async () => {
-  const md = buildExportMarkdown(state.messages);
+  const session = getActiveSession();
+  const md = buildExportMarkdown(session?.messages || []);
   try {
     await navigator.clipboard.writeText(md);
     el.copyMdBtn.textContent = "Copied";
@@ -327,40 +404,55 @@ el.copyMdBtn.addEventListener("click", async () => {
     setTimeout(() => (el.copyMdBtn.textContent = "Copy"), 900);
   }
 });
-el.downloadMdBtn.addEventListener("click", () => downloadExport(state.messages));
+el.downloadMdBtn.addEventListener("click", () => {
+  const session = getActiveSession();
+  downloadExport(session?.messages || []);
+});
 
 // Persona
 loadPersona();
 el.personaSelect.addEventListener("change", () => {
   savePersona(el.personaSelect.value);
-  newSession();
-});
-
-// Server test
-el.serverTestBtn.addEventListener("click", async () => {
-  setServerStatus("Testing server…", "info");
-  try {
-    const health = await serverHealthCheck();
-    setServerStatus(
-      health?.ok ? "Server OK. Gemini key configured." : "Server reachable, but missing key.",
-      health?.ok ? "ok" : "warn",
-    );
-    setConnectionStatus(el, health?.ok ? "ok" : "warn", health?.ok ? "Server mode" : "Server needs config");
-  } catch (e) {
-    setServerStatus(`Server test failed: ${String(e?.message || e)}`, "bad");
-    setConnectionStatus(el, "warn", "Server error");
+  const session = getActiveSession();
+  if (session) {
+    session.personaId = state.personaId;
+    updateSessionMeta(session);
+    persistSessions();
+    renderSessionsList();
   }
 });
 
-// Elapsed timer
-setInterval(() => {
-  el.statElapsed.textContent = formatElapsed(Date.now() - state.startedAt);
-}, 250);
+// Service
+el.serverTestBtn.addEventListener("click", async () => {
+  setServerStatus("Checking…", "info");
+  try {
+    const health = await serverHealthCheck();
+    el.servicePanel.classList.toggle("hidden", !!health?.ok);
+    setConnectionStatus(el, health?.ok ? "ok" : "warn", health?.ok ? "Online" : "Needs setup");
+    setServerStatus(health?.ok ? "Service is ready." : "Missing GEMINI_API_KEY env var.", health?.ok ? "ok" : "warn");
+  } catch (e) {
+    el.servicePanel.classList.remove("hidden");
+    setConnectionStatus(el, "warn", "Offline");
+    setServerStatus(String(e?.message || e), "bad");
+  }
+});
 
 // Init
 autoSize();
-updateStats();
 setBusy(false);
-setConnectionStatus(el, "ok", "Server mode");
-setServerStatus("Set GEMINI_API_KEY in Netlify → Site settings → Environment variables.", "warn");
+setConnectionStatus(el, "ok", "Online");
+loadSessions();
+
+// Quiet health check
+(async () => {
+  try {
+    const h = await serverHealthCheck();
+    if (!h?.ok) el.servicePanel.classList.remove("hidden");
+    else el.servicePanel.classList.add("hidden");
+  } catch {
+    el.servicePanel.classList.remove("hidden");
+    setConnectionStatus(el, "warn", "Offline");
+    setServerStatus("Service unreachable. If you're on Vercel, ensure env var GEMINI_API_KEY is set and redeploy.", "warn");
+  }
+})();
 
