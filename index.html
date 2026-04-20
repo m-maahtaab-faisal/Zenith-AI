@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <title>Zenith Elite &mdash; Premium Gemini Chat</title>
+    <title>Zenith Elite &mdash; Premium AI Chat</title>
 
-    <!-- Tailwind (CDN) + Config -->
+    <!-- Tailwind config MUST come before Tailwind CDN -->
     <script src="src/tailwind-config.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -21,17 +21,28 @@
     <!-- App CSS -->
     <link rel="stylesheet" href="assets/styles.css" />
 
-    <!-- Markdown + Sanitizer + Syntax Highlight -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Markdown + Sanitizer -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+
+    <!-- Syntax Highlighting -->
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css"
     />
     <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 
-    <!-- Document parsing (client-side) -->
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.js"></script>
+    <!-- PDF.js v3 (v4 breaks globalThis.pdfjsLib on CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <script>
+      // Pre-configure worker so attachments.js doesn't need to set it
+      if (typeof pdfjsLib !== "undefined") {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      }
+    </script>
+
+    <!-- DOCX parser -->
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.7.2/mammoth.browser.min.js"></script>
   </head>
 
@@ -39,7 +50,7 @@
     <div class="bg-lights"></div>
     <div class="noise"></div>
 
-    <!-- Welcome / Boot Overlay -->
+    <!-- Boot Overlay (removed after first visit) -->
     <div
       id="boot"
       class="fixed inset-0 z-[60] grid place-items-center bg-[rgba(5,5,5,0.92)] px-6"
@@ -64,11 +75,11 @@
                 <div class="text-xl font-semibold text-white">Initializing Zenith Intelligence...</div>
               </div>
             </div>
-            <div class="text-xs text-white/60 hidden sm:block">Obsidian Mode · Glass UI · Gemini</div>
+            <div class="text-xs text-white/60 hidden sm:block">Obsidian Mode &middot; Glass UI &middot; OpenRouter</div>
           </div>
 
           <div class="mt-6">
-            <div class="h-2 rounded-full bg-white/7 overflow-hidden border border-white/10">
+            <div class="h-2 rounded-full bg-white/10 overflow-hidden border border-white/10">
               <div class="h-full w-[62%] rounded-full bg-gradient-to-r from-plasma-b via-plasma-a to-zen-500 relative">
                 <div class="absolute inset-0 opacity-35">
                   <div class="h-full w-1/3 bg-white/30 blur-md animate-shimmer"></div>
@@ -82,7 +93,7 @@
           </div>
         </div>
         <div class="mt-4 text-center text-xs text-white/45">
-          Tip: Configure <span class="text-white/75">GEMINI_API_KEY</span> in Vercel → Project → Settings → Environment Variables.
+          Tip: Configure <span class="text-white/75">OPENROUTER_API_KEY</span> in Vercel &rarr; Project &rarr; Settings &rarr; Environment Variables.
         </div>
       </div>
     </div>
@@ -92,11 +103,13 @@
       id="drawerBackdrop"
       class="fixed inset-0 z-40 hidden bg-black/55"
       aria-label="Close sidebar"
+      type="button"
     ></button>
 
     <div class="relative z-10 min-h-screen">
       <div class="mx-auto max-w-[1320px] px-4 sm:px-5 lg:px-6 py-4 sm:py-6">
         <div class="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4 lg:gap-5">
+
           <!-- Sidebar -->
           <aside
             id="sidebar"
@@ -126,14 +139,10 @@
                   id="closeSidebar"
                   class="lg:hidden inline-flex items-center justify-center h-10 w-10 rounded-2xl glass hover:bg-white/10 transition"
                   aria-label="Close sidebar"
+                  type="button"
                 >
                   <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5">
-                    <path
-                      d="M6 6l12 12M18 6L6 18"
-                      stroke="rgba(255,255,255,0.85)"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
+                    <path d="M6 6l12 12M18 6L6 18" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linecap="round" />
                   </svg>
                 </button>
               </div>
@@ -144,13 +153,14 @@
                   <span id="connText" class="text-white/60">Server mode</span>
                 </div>
                 <div class="text-xs text-white/55">
-                  Model: <span class="text-white/85 font-medium" id="modelName">gemini-1.5-flash</span>
+                  Model: <span class="text-white/85 font-medium" id="modelName">openrouter/free</span>
                 </div>
               </div>
             </div>
 
             <div class="p-5 space-y-4 overflow-auto scrollbar lg:h-[calc(100vh-3rem-92px)]">
-              <!-- Service Status (only shown when misconfigured) -->
+
+              <!-- Service Status -->
               <section id="servicePanel" class="hidden glass rounded-2xl p-4 shadow-insetGlow">
                 <div class="flex items-center justify-between gap-3">
                   <h2 class="text-sm font-semibold text-white/90">Service</h2>
@@ -159,8 +169,8 @@
                 <div id="serverStatus" class="mt-2 text-xs text-white/60"></div>
                 <div class="mt-3 flex flex-wrap gap-2">
                   <button
-                    class="px-4 py-2.5 rounded-2xl glass hover:bg-white/10 transition text-xs"
                     id="serverTestBtn"
+                    class="px-4 py-2.5 rounded-2xl glass hover:bg-white/10 transition text-xs"
                     type="button"
                   >
                     Re-check
@@ -214,7 +224,7 @@
                 <div class="mt-3 text-[11px] text-white/50">Tip: Export is per chat session.</div>
               </section>
 
-              <!-- Brain -->
+              <!-- Brain / Persona -->
               <section class="glass rounded-2xl p-4 shadow-insetGlow">
                 <div class="flex items-center justify-between gap-3">
                   <h2 class="text-sm font-semibold text-white/90">Brain</h2>
@@ -234,11 +244,10 @@
                 </div>
               </section>
 
-              <!-- (Shortcuts removed for a cleaner, more premium sidebar) -->
             </div>
           </aside>
 
-          <!-- Main -->
+          <!-- Main Chat Area -->
           <main class="glass-strong shadow-glow rounded-3xl overflow-hidden">
             <header class="p-4 sm:p-5 border-b border-white/10">
               <div class="flex items-center justify-between gap-3">
@@ -250,17 +259,12 @@
                     type="button"
                   >
                     <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5">
-                      <path
-                        d="M4 7h16M4 12h16M4 17h16"
-                        stroke="rgba(255,255,255,0.85)"
-                        stroke-width="1.6"
-                        stroke-linecap="round"
-                      />
+                      <path d="M4 7h16M4 12h16M4 17h16" stroke="rgba(255,255,255,0.85)" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
                   </button>
                   <div>
                     <div class="text-[11px] tracking-[0.18em] uppercase text-white/60">Premium AI Chat</div>
-                    <div class="text-lg sm:text-xl font-semibold text-white leading-tight">Zenith — Premium AI Assistant</div>
+                    <div class="text-lg sm:text-xl font-semibold text-white leading-tight">Zenith &mdash; Premium AI Assistant</div>
                   </div>
                 </div>
                 <div class="hidden sm:flex items-center gap-2 text-xs text-white/60">
@@ -291,8 +295,8 @@
                   <div class="glass rounded-3xl px-4 py-3 border border-white/10 max-w-[920px]">
                     <div class="text-xs text-white/55">Zenith</div>
                     <div class="mt-1 markdown text-sm text-white/85">
-                      Server-key deployment (no user keys). Attach images or documents, then ask questions about them.
-                      Use <b>Brain â†’ Persona</b> to switch modes.
+                      Hello! I'm Zenith, your premium AI assistant. You can attach images, PDFs, or documents and ask questions about them.
+                      Use <strong>Brain &rarr; Persona</strong> in the sidebar to switch modes.
                     </div>
                   </div>
                 </div>
@@ -308,9 +312,10 @@
                     <textarea
                       id="prompt"
                       rows="1"
-                      placeholder="Ask anything. Or attach a PDF/image and ask: “Summarize and extract action items.”"
+                      placeholder="Ask anything. Or attach a PDF/image and ask: Summarize and extract action items."
                       class="focus-ring w-full resize-none bg-transparent text-sm text-white/85 placeholder:text-white/35 outline-none px-2 py-2 leading-6"
                       spellcheck="false"
+                      autocomplete="off"
                     ></textarea>
                     <div class="mt-2 flex items-center justify-between gap-3 px-1">
                       <div class="text-[11px] text-white/50">
@@ -335,7 +340,7 @@
                         </button>
                         <button
                           id="stopBtn"
-                          class="hidden px-3 py-2 rounded-2xl glass hover:bg-white/10 transition text-xs"
+                          class="hidden px-3 py-2 rounded-2xl glass hover:bg-white/10 transition text-xs text-rose-300"
                           title="Stop generation (Esc)"
                           type="button"
                         >
@@ -353,17 +358,18 @@
                   </div>
                 </div>
                 <div class="mt-3 text-[11px] text-white/45">
-                  Supports: images, PDF, DOCX, and text-like files. Large files are summarized via extracted text.
+                  Supports: images, PDF, DOCX, and text files &middot; <span id="statElapsed" class="text-white/30"></span>
                 </div>
               </div>
             </section>
           </main>
+
         </div>
       </div>
     </div>
 
+    <!-- Boot overlay logic (inline, non-module so it runs immediately) -->
     <script>
-      // Boot overlay must never block the UI even if module scripts fail to load (e.g., file://).
       (function () {
         const boot = document.getElementById("boot");
         const bootHint = document.getElementById("bootHint");
@@ -385,22 +391,18 @@
 
         function hideBoot() {
           clearInterval(hintTimer);
-          try {
-            localStorage.setItem(seenKey, "1");
-          } catch {}
+          try { localStorage.setItem(seenKey, "1"); } catch {}
           boot.style.animation = "fadeOut 420ms ease-out forwards";
-          setTimeout(() => boot.remove(), 460);
+          setTimeout(() => { if (boot.parentNode) boot.remove(); }, 460);
         }
 
         window.addEventListener("load", () => setTimeout(hideBoot, 1400));
-        // Hard-fail fallback: remove boot after 6s even if load handlers never run.
-        setTimeout(() => {
-          if (document.getElementById("boot")) hideBoot();
-        }, 6000);
+        // Hard fallback: remove boot after 6s even if load event never fires
+        setTimeout(() => { if (document.getElementById("boot")) hideBoot(); }, 6000);
       })();
     </script>
 
+    <!-- App entry point (ES module) -->
     <script type="module" src="src/app.js"></script>
   </body>
 </html>
-
