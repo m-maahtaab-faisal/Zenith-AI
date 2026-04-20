@@ -1,4 +1,4 @@
-export const MODEL = "gemini-2.0-flash";
+export const MODEL = "meta-llama/llama-4-scout:free"; // Free model on OpenRouter
 
 export const PERSONAS = {
   general:
@@ -13,8 +13,7 @@ export const STORAGE = {
 
 export const LIMITS = {
   maxAttachments: 6,
-  maxImageBytes: 1_800_000, // ~1.8MB raw per image (base64 expands)
+  maxImageBytes: 1_800_000,
   maxTotalImageBytes: 4_500_000,
   maxExtractedTextChars: 140_000,
 };
-

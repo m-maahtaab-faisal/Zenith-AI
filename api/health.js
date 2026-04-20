@@ -16,9 +16,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const hasKey = !!process.env.GEMINI_API_KEY;
+  const hasKey = !!process.env.OPENROUTER_API_KEY;
   res.statusCode = hasKey ? 200 : 503;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
-  res.end(JSON.stringify({ ok: hasKey, message: hasKey ? "Ready" : "Missing GEMINI_API_KEY env var" }));
+  res.end(JSON.stringify({ ok: hasKey, message: hasKey ? "Ready" : "Missing OPENROUTER_API_KEY env var" }));
 }
