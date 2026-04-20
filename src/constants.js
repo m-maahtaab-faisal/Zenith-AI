@@ -1,4 +1,4 @@
-export const MODEL = "meta-llama/llama-4-scout:free"; // Free model on OpenRouter
+export const MODEL = "deepseek/deepseek-r1-0528:free"; // Free model on OpenRouter
 
 export const PERSONAS = {
   general:
