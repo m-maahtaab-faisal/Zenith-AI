@@ -16,14 +16,6 @@ export function estTokens(text) {
   return Math.max(1, Math.round(text.length / 4));
 }
 
-export function debounce(fn, waitMs) {
-  let t = null;
-  return (...args) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...args), waitMs);
-  };
-}
-
 export function downloadText(filename, text) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -34,5 +26,22 @@ export function downloadText(filename, text) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export function bytesToHuman(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+export function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 

@@ -1,4 +1,4 @@
-# Secrets (do not commit)
+# Secrets
 .env
 .env.*
 *.local
@@ -11,3 +11,4 @@ Desktop.ini
 # Node
 node_modules/
 dist/
+

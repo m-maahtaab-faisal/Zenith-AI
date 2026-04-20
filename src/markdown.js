@@ -1,5 +1,3 @@
-import { escHtml } from "./utils.js";
-
 export function renderAssistantMarkdown(targetEl, md) {
   const rawHtml = marked.parse(md ?? "");
   const clean = DOMPurify.sanitize(rawHtml, {
@@ -42,9 +40,5 @@ export function renderAssistantMarkdown(targetEl, md) {
     });
     pre.appendChild(btn);
   });
-}
-
-export function renderPlainText(targetEl, text) {
-  targetEl.innerHTML = escHtml(text ?? "").replaceAll("\n", "<br/>");
 }
 

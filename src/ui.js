@@ -1,5 +1,3 @@
-import { escHtml } from "./utils.js";
-
 export function ensureAtBottom(chatEl) {
   chatEl.scrollTop = chatEl.scrollHeight;
 }
@@ -13,7 +11,7 @@ export function setConnectionStatus({ connDot, connText, statusPill }, kind, tex
   };
   const v = map[kind] ?? map.off;
   connDot.className = `inline-block h-2 w-2 rounded-full ${v.dot}`;
-  connText.textContent = text ?? (kind === "ok" ? "Connected" : "API key required");
+  connText.textContent = text ?? (kind === "ok" ? "Connected" : "Server mode");
   statusPill.textContent = v.pill;
 }
 
@@ -60,7 +58,7 @@ export function addMessageBubble(chatEl, { role, label, html, text, streaming = 
   if (html != null) body.innerHTML = html;
   else if (text != null) {
     if (streaming) body.textContent = text;
-    else body.innerHTML = escHtml(text).replaceAll("\n", "<br/>");
+    else body.innerHTML = String(text).replaceAll("\n", "<br/>");
   }
 
   bubble.appendChild(who);
