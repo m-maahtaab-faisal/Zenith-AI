@@ -11,7 +11,9 @@ export async function serverHealthCheck() {
   const res = await fetchWithFallback("/api/health", "/.netlify/functions/health", { method: "GET" });
   if (!res.ok) {
     if (res.status === 404) {
-      throw new Error("Functions not found (404). Run with `netlify dev` or deploy on Netlify with functions enabled.");
+      throw new Error(
+        "Functions not found (404). If you're on Vercel, ensure `api/health.js` deployed. If you're on Netlify, ensure functions/redirects are enabled.",
+      );
     }
     throw new Error(`Health failed: ${res.status}`);
   }
@@ -32,7 +34,9 @@ export async function sendChatToServer({ messages, systemPersona, attachments })
   });
   if (!res.ok) {
     if (res.status === 404) {
-      throw new Error("Functions not found (404). Run with `netlify dev` or deploy on Netlify with functions enabled.");
+      throw new Error(
+        "Functions not found (404). If you're on Vercel, ensure `api/gemini.js` deployed. If you're on Netlify, ensure functions/redirects are enabled.",
+      );
     }
     const text = await res.text().catch(() => "");
     throw new Error(`Server error ${res.status}: ${text || res.statusText}`);
