@@ -1,6 +1,6 @@
 const DEFAULT_MODEL = "meta-llama/llama-4-scout:free";
 const DEFAULT_PERSONA =
-  "You are Zenith, a premium general-purpose AI assistant. Be accurate, helpful, and concise. Ask a brief clarifying question only when necessary. Use clear structure and provide actionable next steps.";
+  "You are Zenith, a general-purpose AI assistant. Be accurate, helpful, and concise. Ask a brief clarifying question only when necessary. Use clear structure and provide actionable next steps.";
 
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -76,7 +76,7 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
         "HTTP-Referer": "https://zenith-ai.vercel.app",
-        "X-Title": "Zenith",
+        "X-Title": "Zenith AI",
       },
       body: JSON.stringify({ model, messages, max_tokens: 8192, temperature: 0.35, top_p: 0.9 }),
     });

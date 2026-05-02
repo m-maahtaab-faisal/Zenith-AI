@@ -178,6 +178,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.10em;
 }
+.brand-sub:empty { display: none; }
 
 .close-btn {
   width: 28px;

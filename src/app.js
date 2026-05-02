@@ -5,7 +5,9 @@ import { renderMarkdown } from "./markdown.js";
 import { sendChatToServer, serverHealthCheck } from "./api.js";
 import { parseFiles, chipLabel } from "./attachments.js";
 
-marked.setOptions({ gfm: true, breaks: true });
+if (typeof globalThis.marked !== "undefined" && typeof globalThis.marked.setOptions === "function") {
+  globalThis.marked.setOptions({ gfm: true, breaks: true });
+}
 
 // ─── DOM refs ──────────────────────────────────────────────────────
 const el = {
@@ -364,7 +366,7 @@ async function sendMessage() {
   // Show attachment notice inline
   if (state.attachments.length > 0) {
     const names = state.attachments.map((a) => a.name).join(", ");
-    appendAssistantBubble(`<div style="font-size:12px;color:var(--text-3);">📎 Attached: ${escHtml(names)}</div>`);
+    appendAssistantBubble(`<div style="font-size:12px;color:var(--text-3);">Attached: ${escHtml(names)}</div>`);
   }
 
   updateSessionMeta(session);
