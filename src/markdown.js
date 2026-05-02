@@ -1,6 +1,16 @@
-export function renderAssistantMarkdown(targetEl, md) {
-  const rawHtml = marked.parse(md ?? "");
-  const clean = DOMPurify.sanitize(rawHtml, {
+export function renderMarkdown(targetEl, md) {
+  if (!targetEl) return;
+
+  const hasMarked = typeof globalThis.marked !== "undefined" && typeof globalThis.marked.parse === "function";
+  const hasPurify = typeof globalThis.DOMPurify !== "undefined" && typeof globalThis.DOMPurify.sanitize === "function";
+
+  if (!hasMarked || !hasPurify) {
+    targetEl.textContent = md ?? "";
+    return;
+  }
+
+  const rawHtml = globalThis.marked.parse(md ?? "");
+  const clean = globalThis.DOMPurify.sanitize(rawHtml, {
     USE_PROFILES: { html: true },
     ALLOWED_ATTR: ["href", "title", "target", "rel", "class"],
   });
@@ -12,11 +22,14 @@ export function renderAssistantMarkdown(targetEl, md) {
     a.setAttribute("rel", "noopener noreferrer");
   });
 
-  targetEl.querySelectorAll("pre code").forEach((codeEl) => {
-    try {
-      hljs.highlightElement(codeEl);
-    } catch {}
-  });
+  const hasHljs = typeof globalThis.hljs !== "undefined" && typeof globalThis.hljs.highlightElement === "function";
+  if (hasHljs) {
+    targetEl.querySelectorAll("pre code").forEach((codeEl) => {
+      try {
+        globalThis.hljs.highlightElement(codeEl);
+      } catch {}
+    });
+  }
 
   targetEl.querySelectorAll("pre").forEach((pre) => {
     if (pre.dataset.enhanced === "1") return;
@@ -41,4 +54,7 @@ export function renderAssistantMarkdown(targetEl, md) {
     pre.appendChild(btn);
   });
 }
+
+// Back-compat (older name in the repo)
+export const renderAssistantMarkdown = renderMarkdown;
 
