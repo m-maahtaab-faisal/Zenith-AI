@@ -20,9 +20,7 @@ export async function serverHealthCheck() {
 }
 
 export async function sendChatToServer({ messages, systemPersona, attachments }) {
-  const res = await fetchWithTimeout(
-    "/api/gemini",
-    {
+  const res = await fetchWithTimeout("/api/gemini", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -31,10 +29,7 @@ export async function sendChatToServer({ messages, systemPersona, attachments })
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
       attachments,
     }),
-    }),
-    },
-    60_000
-  );
+  }, 60_000);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
