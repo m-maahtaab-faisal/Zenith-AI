@@ -8,55 +8,45 @@ function cors(res) {
   res.setHeader("Access-Control-Allow-Headers", "content-type");
 }
 
-function json(res, statusCode, obj) {
+function json(res, status, obj) {
   cors(res);
-  res.statusCode = statusCode;
+  res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.end(JSON.stringify(obj));
 }
 
-async function readJsonBody(req) {
+async function readBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  for await (const c of req) chunks.push(c);
   const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw) return {};
-  return JSON.parse(raw);
+  return raw ? JSON.parse(raw) : {};
 }
 
 function buildMessages(persona, messages, attachments) {
-  const result = [];
+  const result = [{ role: "system", content: persona }];
 
-  // System message
-  result.push({ role: "system", content: persona });
-
-  // Conversation history
   for (const m of messages || []) {
     if (!m?.content) continue;
-    if (m.role === "user") {
-      result.push({ role: "user", content: String(m.content) });
-    } else if (m.role === "assistant") {
-      result.push({ role: "assistant", content: String(m.content) });
-    }
+    if (m.role === "user" || m.role === "assistant")
+      result.push({ role: m.role, content: String(m.content) });
   }
 
-  // Attach files to the last user message
-  if (attachments && attachments.length > 0) {
-    const lastUserIndex = result.map((m) => m.role).lastIndexOf("user");
-    if (lastUserIndex >= 0) {
-      let extra = "\n\nUse the attached files below to answer the user's request:";
+  // Attach files to last user message
+  if (attachments?.length) {
+    const idx = result.map((m) => m.role).lastIndexOf("user");
+    if (idx >= 0) {
+      let extra = "\n\nThe user has attached the following files — use them to answer:\n";
       for (const a of attachments) {
         if (!a) continue;
         if (a.kind === "text") {
-          const note = a.note ? ` (${a.note})` : "";
-          extra += `\n\n[Attachment: ${a.name}${note}]\n${a.text || ""}\n[/Attachment]`;
+          extra += `\n---\n[File: ${a.name}${a.note ? ` — ${a.note}` : ""}]\n${a.text || ""}\n---\n`;
         } else if (a.kind === "image") {
-          // OpenRouter supports image URLs in content array for vision models
-          // For non-vision free models, send a note instead
-          extra += `\n\n[Image attached: ${a.name} — image content not supported on this model]`;
+          // Most free OpenRouter models don't support vision; describe what was attached
+          extra += `\n[Image attached: "${a.name}" — Note: analyze it if the model supports vision, otherwise acknowledge it.]`;
         }
       }
-      result[lastUserIndex].content += extra;
+      result[idx].content += extra;
     }
   }
 
@@ -64,51 +54,20 @@ function buildMessages(persona, messages, attachments) {
 }
 
 export default async function handler(req, res) {
-  if (req.method && req.method.toUpperCase() === "OPTIONS") {
-    cors(res);
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-  if (req.method && req.method.toUpperCase() !== "POST") {
-    json(res, 405, { error: "Method not allowed" });
-    return;
-  }
+  const method = req.method?.toUpperCase();
+  if (method === "OPTIONS") { cors(res); res.statusCode = 204; res.end(); return; }
+  if (method !== "POST") { json(res, 405, { error: "Method not allowed" }); return; }
 
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    json(res, 503, { error: "Missing OPENROUTER_API_KEY env var" });
-    return;
-  }
+  if (!apiKey) { json(res, 503, { error: "Missing OPENROUTER_API_KEY env var" }); return; }
 
   let payload;
-  try {
-    payload = await readJsonBody(req);
-  } catch {
-    json(res, 400, { error: "Invalid JSON" });
-    return;
-  }
+  try { payload = await readBody(req); }
+  catch { json(res, 400, { error: "Invalid JSON" }); return; }
 
-  const model =
-    typeof payload.model === "string" && payload.model.trim()
-      ? payload.model.trim()
-      : DEFAULT_MODEL;
-  const persona =
-    typeof payload.systemPersona === "string" && payload.systemPersona.trim()
-      ? payload.systemPersona.trim()
-      : DEFAULT_PERSONA;
-  const messages = Array.isArray(payload.messages) ? payload.messages : [];
-  const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
-
-  const builtMessages = buildMessages(persona, messages, attachments);
-
-  const body = {
-    model,
-    messages: builtMessages,
-    max_tokens: 8192,
-    temperature: 0.35,
-    top_p: 0.9,
-  };
+  const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : DEFAULT_MODEL;
+  const persona = typeof payload.systemPersona === "string" && payload.systemPersona.trim() ? payload.systemPersona.trim() : DEFAULT_PERSONA;
+  const messages = buildMessages(persona, payload.messages || [], payload.attachments || []);
 
   try {
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -117,20 +76,15 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
         "HTTP-Referer": "https://zenith-ai.vercel.app",
-        "X-Title": "Zenith Elite",
+        "X-Title": "Zenith",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ model, messages, max_tokens: 8192, temperature: 0.35, top_p: 0.9 }),
     });
 
     const data = await r.json().catch(() => null);
+    if (!r.ok) { json(res, r.status, { error: "OpenRouter error", details: data }); return; }
 
-    if (!r.ok) {
-      json(res, r.status, { error: "OpenRouter request failed", details: data || null });
-      return;
-    }
-
-    const text = data?.choices?.[0]?.message?.content || "";
-    json(res, 200, { text });
+    json(res, 200, { text: data?.choices?.[0]?.message?.content || "" });
   } catch (e) {
     json(res, 500, { error: "Server exception", message: String(e?.message || e) });
   }

@@ -1,4 +1,4 @@
-export const MODEL = "openrouter/free"; // Free model on OpenRouter
+export const MODEL = "meta-llama/llama-4-scout:free";
 
 export const PERSONAS = {
   general:
@@ -8,12 +8,13 @@ export const PERSONAS = {
 };
 
 export const STORAGE = {
-  persona: "zenith_elite_persona",
+  persona: "zenith_persona",
+  sessions: "zenith_sessions_v3",
 };
 
 export const LIMITS = {
   maxAttachments: 6,
-  maxImageBytes: 1_800_000,
-  maxTotalImageBytes: 4_500_000,
-  maxExtractedTextChars: 140_000,
+  maxImageBytes: 4_000_000,
+  maxTotalImageBytes: 10_000_000,
+  maxExtractedTextChars: 200_000,
 };

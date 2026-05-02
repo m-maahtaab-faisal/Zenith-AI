@@ -1,98 +1,314 @@
 import { MODEL, PERSONAS, STORAGE } from "./constants.js";
-import { qs } from "./dom.js";
-import { escHtml, estTokens, formatElapsed, bytesToHuman } from "./utils.js";
+import { qs, escHtml, estTokens, formatElapsed, bytesToHuman, downloadText } from "./utils.js";
 import { buildExportMarkdown, downloadExport } from "./export.js";
-import { renderAssistantMarkdown } from "./markdown.js";
+import { renderMarkdown } from "./markdown.js";
 import { sendChatToServer, serverHealthCheck } from "./api.js";
-import { addMessageBubble, ensureAtBottom, setConnectionStatus, sidebarOpen } from "./ui.js";
-import { parseFilesToAttachments, attachmentSummary } from "./attachments.js";
+import { parseFiles, chipLabel } from "./attachments.js";
 
 marked.setOptions({ gfm: true, breaks: true });
 
-const SESSIONS_KEY = "zenith_elite_sessions_v2";
-
+// ─── DOM refs ──────────────────────────────────────────────────────
 const el = {
-  chat: qs("#chat"),
-  prompt: qs("#prompt"),
-  sendBtn: qs("#sendBtn"),
-  stopBtn: qs("#stopBtn"),
-  attachBtn: qs("#attachBtn"),
-  fileInput: qs("#fileInput"),
-  attachmentsWrap: qs("#attachments"),
-  attachmentChips: qs("#attachmentChips"),
-
-  statusPill: qs("#statusPill"),
-  connDot: qs("#connDot"),
-  connText: qs("#connText"),
-  modelName: qs("#modelName"),
-
-  openSidebar: qs("#openSidebar"),
-  closeSidebar: qs("#closeSidebar"),
-  sidebar: qs("#sidebar"),
-  drawerBackdrop: qs("#drawerBackdrop"),
-
-  newSessionBtn: qs("#newSessionBtn"),
-  sessionsList: qs("#sessionsList"),
-
-  servicePanel: qs("#servicePanel"),
-  serverTestBtn: qs("#serverTestBtn"),
-  serverStatus: qs("#serverStatus"),
-
-  personaSelect: qs("#personaSelect"),
-  personaHint: qs("#personaHint"),
-
-  copyMdBtn: qs("#copyMdBtn"),
-  downloadMdBtn: qs("#downloadMdBtn"),
-
-  statElapsed: qs("#statElapsed"),
+  chat:           qs("#chat"),
+  prompt:         qs("#prompt"),
+  sendBtn:        qs("#sendBtn"),
+  stopBtn:        qs("#stopBtn"),
+  attachBtn:      qs("#attachBtn"),
+  fileInput:      qs("#fileInput"),
+  attachWrap:     qs("#attachments"),
+  chips:          qs("#attachmentChips"),
+  statusPill:     qs("#statusPill"),
+  connDot:        qs("#connDot"),
+  connText:       qs("#connText"),
+  modelName:      qs("#modelName"),
+  openSidebar:    qs("#openSidebar"),
+  closeSidebar:   qs("#closeSidebar"),
+  sidebar:        qs("#sidebar"),
+  backdrop:       qs("#drawerBackdrop"),
+  newSessionBtn:  qs("#newSessionBtn"),
+  sessionsList:   qs("#sessionsList"),
+  servicePanel:   qs("#servicePanel"),
+  serverTestBtn:  qs("#serverTestBtn"),
+  serverStatus:   qs("#serverStatus"),
+  personaSelect:  qs("#personaSelect"),
+  personaHint:    qs("#personaHint"),
+  copyMdBtn:      qs("#copyMdBtn"),
+  downloadMdBtn:  qs("#downloadMdBtn"),
+  statElapsed:    qs("#statElapsed"),
+  chatTitle:      qs("#chatTitle"),
+  clearChatBtn:   qs("#clearChatBtn"),
 };
 
 el.modelName.textContent = MODEL;
 
+// ─── State ─────────────────────────────────────────────────────────
 const state = {
   busy: false,
-  abort: null,
   stopRequested: false,
-
-  startedAt: Date.now(),
   personaId: "general",
   attachments: [],
-
   sessions: [],
-  activeSessionId: "",
+  activeId: null,
+  startedAt: Date.now(),
 };
+
+// ─── Status helpers ────────────────────────────────────────────────
+function setStatus(kind, label) {
+  const dots = { off: "", ok: "ok", busy: "busy", warn: "warn" };
+  el.connDot.className = `status-dot ${dots[kind] || ""}`;
+  el.connText.textContent = label;
+  const pills = { off: "Standby", ok: "Online", busy: "Thinking", warn: "Attention" };
+  el.statusPill.textContent = pills[kind] || "Standby";
+}
+
+function setServerMsg(msg, kind = "info") {
+  el.serverStatus.className = `text-xs mb-2 ${kind === "ok" ? "text-emerald-400" : kind === "bad" ? "text-red-400" : kind === "warn" ? "text-yellow-400" : "text-white/60"}`;
+  el.serverStatus.textContent = msg;
+}
 
 function setBusy(busy) {
   state.busy = busy;
   el.sendBtn.disabled = busy;
   if (busy) {
     el.stopBtn.classList.remove("hidden");
-    setConnectionStatus(el, "busy", "Generating…");
+    setStatus("busy", "Generating…");
   } else {
     el.stopBtn.classList.add("hidden");
-    setConnectionStatus(el, "ok", "Online");
+    setStatus("ok", "Online");
   }
 }
 
-function setServerStatus(msg, kind = "info") {
-  const color =
-    kind === "ok"
-      ? "text-emerald-300"
-      : kind === "bad"
-        ? "text-rose-300"
-        : kind === "warn"
-          ? "text-amber-300"
-          : "text-white/60";
-  el.serverStatus.className = `mt-2 text-xs ${color}`;
-  el.serverStatus.textContent = msg;
-}
-
+// ─── Auto-size textarea ────────────────────────────────────────────
 function autoSize() {
-  el.prompt.style.height = "0px";
-  const next = Math.min(220, Math.max(56, el.prompt.scrollHeight));
-  el.prompt.style.height = `${next}px`;
+  el.prompt.style.height = "0";
+  el.prompt.style.height = Math.min(200, Math.max(52, el.prompt.scrollHeight)) + "px";
 }
 
+// ─── Scroll to bottom ──────────────────────────────────────────────
+function scrollBottom() {
+  el.chat.scrollTop = el.chat.scrollHeight;
+}
+
+// ─── Sessions ──────────────────────────────────────────────────────
+function saveSessions() {
+  try { localStorage.setItem(STORAGE.sessions, JSON.stringify(state.sessions)); } catch {}
+}
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE.sessions);
+    state.sessions = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(state.sessions)) state.sessions = [];
+  } catch { state.sessions = []; }
+}
+
+function getSession(id) {
+  return state.sessions.find((s) => s.id === id) || null;
+}
+
+function getActive() {
+  return getSession(state.activeId);
+}
+
+function titleFromMessages(messages) {
+  const first = (messages || []).find((m) => m.role === "user" && m.content);
+  const t = String(first?.content || "New chat").trim().replace(/\s+/g, " ");
+  return t.length > 44 ? t.slice(0, 44) + "…" : t;
+}
+
+function updateSessionMeta(session) {
+  session.updatedAt = Date.now();
+  session.messageCount = (session.messages || []).filter((m) => m.role !== "system").length;
+  if (!session.title || session.title === "New chat")
+    session.title = titleFromMessages(session.messages);
+}
+
+/** Create a new session ONLY if called explicitly by user */
+function createSession() {
+  const s = {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    personaId: state.personaId,
+    messages: [],
+    messageCount: 0,
+  };
+  state.sessions.unshift(s);
+  return s;
+}
+
+/** Switch to a session and re-render chat */
+function switchSession(id) {
+  const s = getSession(id);
+  if (!s) return;
+  state.activeId = id;
+  state.personaId = PERSONAS[s.personaId] ? s.personaId : "general";
+  el.personaSelect.value = state.personaId;
+  updatePersonaHint();
+  clearAttachments();
+  renderChat(s);
+  renderSessions();
+  updateChatTitle(s);
+  sidebarClose();
+}
+
+function renderSessions() {
+  el.sessionsList.innerHTML = "";
+  const sorted = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  for (const s of sorted) {
+    const active = s.id === state.activeId;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `session-item${active ? " active" : ""}`;
+    btn.innerHTML = `
+      <span class="session-dot"></span>
+      <span class="session-item-inner">
+        <span class="session-title">${escHtml(s.title || "New chat")}</span>
+        <span class="session-meta">${s.messageCount ?? 0} messages</span>
+      </span>
+      <button type="button" class="session-del" data-id="${s.id}" title="Delete chat">×</button>
+    `;
+    btn.addEventListener("click", (e) => {
+      if (e.target.closest(".session-del")) return;
+      switchSession(s.id);
+    });
+    btn.querySelector(".session-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(s.id);
+    });
+    el.sessionsList.appendChild(btn);
+  }
+}
+
+function deleteSession(id) {
+  state.sessions = state.sessions.filter((s) => s.id !== id);
+  if (state.activeId === id) {
+    if (state.sessions.length === 0) {
+      const s = createSession();
+      state.activeId = s.id;
+    } else {
+      state.activeId = state.sessions[0].id;
+    }
+    const s = getActive();
+    renderChat(s);
+    updateChatTitle(s);
+  }
+  saveSessions();
+  renderSessions();
+}
+
+function updateChatTitle(session) {
+  el.chatTitle.textContent = session?.title || "New conversation";
+}
+
+// ─── Chat rendering ────────────────────────────────────────────────
+function renderChat(session) {
+  el.chat.innerHTML = "";
+
+  // Welcome message
+  const welcome = document.createElement("div");
+  welcome.className = "message-row assistant-row";
+  welcome.innerHTML = `
+    <div class="avatar">
+      <svg viewBox="0 0 32 32" fill="none" width="16" height="16">
+        <path d="M16 3L28 26H4L16 3Z" stroke="url(#gw)" stroke-width="1.8" stroke-linejoin="round" fill="rgba(255,255,255,0.04)"/>
+        <defs><linearGradient id="gw" x1="4" y1="3" x2="28" y2="26" gradientUnits="userSpaceOnUse"><stop stop-color="#7dd3fc"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs>
+      </svg>
+    </div>
+    <div class="bubble assistant-bubble">
+      <span class="bubble-name">Zenith</span>
+      <div class="bubble-body markdown">
+        <p>Hello! I'm <strong>Zenith</strong>. Ask me anything or drop a file — I read PDFs, images, DOCX, and more.</p>
+      </div>
+    </div>
+  `;
+  el.chat.appendChild(welcome);
+
+  for (const m of session?.messages || []) {
+    if (m.role === "user") appendUserBubble(m.content);
+    else if (m.role === "assistant") {
+      const b = appendAssistantBubble();
+      renderMarkdown(b, m.content);
+    }
+  }
+  scrollBottom();
+}
+
+function appendUserBubble(text) {
+  const row = document.createElement("div");
+  row.className = "message-row user-row";
+  row.innerHTML = `
+    <div class="bubble user-bubble">
+      <span class="bubble-name">You</span>
+      <div class="bubble-body" style="white-space:pre-wrap">${escHtml(text)}</div>
+    </div>
+  `;
+  el.chat.appendChild(row);
+  scrollBottom();
+  return row;
+}
+
+function appendAssistantBubble(html = "") {
+  const row = document.createElement("div");
+  row.className = "message-row assistant-row";
+  row.innerHTML = `
+    <div class="avatar">
+      <svg viewBox="0 0 32 32" fill="none" width="16" height="16">
+        <path d="M16 3L28 26H4L16 3Z" stroke="url(#gb)" stroke-width="1.8" stroke-linejoin="round" fill="rgba(255,255,255,0.04)"/>
+        <defs><linearGradient id="gb" x1="4" y1="3" x2="28" y2="26" gradientUnits="userSpaceOnUse"><stop stop-color="#7dd3fc"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs>
+      </svg>
+    </div>
+    <div class="bubble assistant-bubble">
+      <span class="bubble-name">Zenith</span>
+      <div class="bubble-body markdown">${html}</div>
+    </div>
+  `;
+  el.chat.appendChild(row);
+  scrollBottom();
+  return row.querySelector(".bubble-body");
+}
+
+// ─── Attachments ───────────────────────────────────────────────────
+function clearAttachments() {
+  state.attachments = [];
+  el.fileInput.value = "";
+  renderChips();
+}
+
+function renderChips() {
+  const has = state.attachments.length > 0;
+  el.attachWrap.classList.toggle("hidden", !has);
+  el.chips.innerHTML = "";
+  for (const att of state.attachments) {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.innerHTML = `
+      <span class="chip-kind">${att.kind === "image" ? "IMG" : "DOC"}</span>
+      <span class="chip-name" title="${escHtml(att.name)}">${escHtml(att.name)}</span>
+      <span style="font-size:10px;color:var(--text-3)">${att.sizeBytes ? bytesToHuman(att.sizeBytes) : ""}</span>
+      <button type="button" class="chip-del" aria-label="Remove">×</button>
+    `;
+    chip.querySelector(".chip-del").addEventListener("click", () => {
+      state.attachments = state.attachments.filter((a) => a.id !== att.id);
+      renderChips();
+    });
+    el.chips.appendChild(chip);
+  }
+}
+
+async function handleFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  try {
+    state.attachments = await parseFiles(files, state.attachments);
+    renderChips();
+  } catch (e) {
+    appendAssistantBubble(`<div style="color:var(--danger);font-size:13px;">Attachment error: ${escHtml(String(e?.message || e))}</div>`);
+  }
+}
+
+// ─── Persona ───────────────────────────────────────────────────────
 function loadPersona() {
   const saved = localStorage.getItem(STORAGE.persona);
   state.personaId = PERSONAS[saved] ? saved : "general";
@@ -101,358 +317,236 @@ function loadPersona() {
 }
 
 function updatePersonaHint() {
-  el.personaHint.textContent =
-    state.personaId === "architect" ? "Sharper engineering mode." : "General-purpose assistant.";
+  el.personaHint.textContent = state.personaId === "architect"
+    ? "Optimized for engineering & architecture."
+    : "All-purpose assistant mode.";
 }
 
-function savePersona(nextId) {
-  state.personaId = PERSONAS[nextId] ? nextId : "general";
+function savePersona(id) {
+  state.personaId = PERSONAS[id] ? id : "general";
   localStorage.setItem(STORAGE.persona, state.personaId);
   updatePersonaHint();
 }
 
-function persistSessions() {
-  try {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(state.sessions));
-  } catch {}
+// ─── Sidebar ───────────────────────────────────────────────────────
+function sidebarOpen() {
+  if (window.matchMedia("(min-width: 1024px)").matches) return;
+  el.sidebar.classList.add("open");
+  el.backdrop.classList.remove("hidden");
 }
 
-function loadSessions() {
-  try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    state.sessions = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    state.sessions = [];
-  }
-  if (state.sessions.length === 0) createSession();
-  if (!state.activeSessionId) state.activeSessionId = state.sessions[0].id;
-  renderSessionsList();
-  switchSession(state.activeSessionId);
+function sidebarClose() {
+  el.sidebar.classList.remove("open");
+  el.backdrop.classList.add("hidden");
 }
 
-function titleFromMessages(messages) {
-  const firstUser = (messages || []).find((m) => m.role === "user" && m.content);
-  const t = String(firstUser?.content || "New chat").trim();
-  return t.length > 42 ? `${t.slice(0, 42)}…` : t;
-}
-
-function updateSessionMeta(session) {
-  session.updatedAt = Date.now();
-  session.messageCount = (session.messages || []).filter((m) => m.role !== "system").length;
-  if (!session.title || session.title === "New chat") session.title = titleFromMessages(session.messages);
-  session.personaId = state.personaId;
-}
-
-function createSession() {
-  const now = Date.now();
-  const s = {
-    id: crypto.randomUUID(),
-    title: "New chat",
-    createdAt: now,
-    updatedAt: now,
-    personaId: state.personaId,
-    messages: [],
-    messageCount: 0,
-  };
-  state.sessions.unshift(s);
-  state.activeSessionId = s.id;
-  persistSessions();
-  renderSessionsList();
-  return s;
-}
-
-function getActiveSession() {
-  return state.sessions.find((s) => s.id === state.activeSessionId) || null;
-}
-
-function renderSessionsList() {
-  el.sessionsList.innerHTML = "";
-  const ordered = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  for (const s of ordered) {
-    const active = s.id === state.activeSessionId;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className =
-      "w-full text-left rounded-2xl px-3 py-2 border border-white/10 transition " +
-      (active ? "bg-white/10" : "glass hover:bg-white/10");
-    btn.innerHTML = `
-      <div class="flex items-center justify-between gap-2">
-        <div class="min-w-0">
-          <div class="text-xs font-medium truncate ${active ? "text-white/90" : "text-white/80"}">${escHtml(s.title || "New chat")}</div>
-          <div class="mt-0.5 text-[11px] text-white/45 truncate">${s.messageCount ?? 0} messages</div>
-        </div>
-        <div class="shrink-0 h-2 w-2 rounded-full ${active ? "bg-emerald-400" : "bg-white/20"}"></div>
-      </div>
-    `;
-    btn.addEventListener("click", () => switchSession(s.id));
-    el.sessionsList.appendChild(btn);
-  }
-}
-
-function switchSession(id) {
-  const s = state.sessions.find((x) => x.id === id);
-  if (!s) return;
-  state.activeSessionId = id;
-  state.personaId = PERSONAS[s.personaId] ? s.personaId : "general";
-  el.personaSelect.value = state.personaId;
-  updatePersonaHint();
-  clearAttachments();
-
-  // Keep initial assistant bubble (first child) then render messages.
-  const first = el.chat.children[0] ? el.chat.children[0].cloneNode(true) : null;
-  el.chat.innerHTML = "";
-  if (first) el.chat.appendChild(first);
-
-  for (const m of s.messages || []) {
-    if (m.role === "user") addMessageBubble(el.chat, { role: "user", label: "You", text: m.content });
-    else if (m.role === "assistant") {
-      const b = addMessageBubble(el.chat, { role: "assistant", label: "Zenith", html: "" });
-      renderAssistantMarkdown(b.body, m.content);
-    }
-  }
-  ensureAtBottom(el.chat);
-  renderSessionsList();
-}
-
-function renderAttachmentChips() {
-  const has = state.attachments.length > 0;
-  el.attachmentsWrap.classList.toggle("hidden", !has);
-  el.attachmentChips.innerHTML = "";
-  if (!has) return;
-
-  for (const att of state.attachments) {
-    const chip = document.createElement("div");
-    chip.className =
-      "inline-flex items-center gap-2 rounded-2xl glass px-3 py-2 text-xs text-white/80 border border-white/10";
-    const icon = att.kind === "image" ? "IMG" : "DOC";
-    const meta = att.sizeBytes ? bytesToHuman(att.sizeBytes) : "";
-    chip.innerHTML = `
-      <span class="text-white/60">${icon}</span>
-      <span class="max-w-[180px] sm:max-w-[220px] truncate">${escHtml(att.name)}</span>
-      <span class="text-white/45">${meta ? escHtml(meta) : ""}</span>
-      <button type="button" class="ml-1 text-white/60 hover:text-white/85" aria-label="Remove attachment">✕</button>
-    `;
-    chip.querySelector("button").addEventListener("click", () => {
-      state.attachments = state.attachments.filter((a) => a.id !== att.id);
-      renderAttachmentChips();
-    });
-    el.attachmentChips.appendChild(chip);
-  }
-}
-
-function clearAttachments() {
-  state.attachments = [];
-  if (el.fileInput) el.fileInput.value = "";
-  renderAttachmentChips();
-}
-
-async function addAttachmentsFromFileList(fileList) {
-  const files = Array.from(fileList || []);
-  if (files.length === 0) return;
-  try {
-    state.attachments = await parseFilesToAttachments(files, state.attachments);
-    renderAttachmentChips();
-  } catch (e) {
-    addMessageBubble(el.chat, {
-      role: "assistant",
-      label: "Zenith",
-      html: `<div class="text-amber-200 text-sm">Attachment rejected.</div><div class="mt-2 text-xs text-white/60">${escHtml(
-        String(e?.message || e),
-      )}</div>`,
-    });
-  }
-}
-
+// ─── Send message ──────────────────────────────────────────────────
 async function sendMessage() {
   const text = el.prompt.value.trim();
   if (!text && state.attachments.length === 0) return;
   if (state.busy) return;
 
-  const session = getActiveSession() || createSession();
+  // Get or use existing session — do NOT auto-create empty sessions
+  let session = getActive();
+  if (!session) {
+    session = createSession();
+    state.activeId = session.id;
+    state.sessions.unshift(session);
+  }
 
   el.prompt.value = "";
   autoSize();
 
   const userContent = text || "Analyze the attached files.";
-  session.messages.push({ role: "user", content: userContent, ts: Date.now(), tokens: estTokens(userContent) });
-  addMessageBubble(el.chat, { role: "user", label: "You", text: userContent });
+  session.messages.push({ role: "user", content: userContent, ts: Date.now() });
+  appendUserBubble(userContent);
 
+  // Show attachment notice inline
   if (state.attachments.length > 0) {
-    addMessageBubble(el.chat, {
-      role: "assistant",
-      label: "Zenith",
-      html: `<div class="text-xs text-white/60">Received: ${escHtml(
-        state.attachments.map(attachmentSummary).join(" · "),
-      )}</div>`,
-    });
+    const names = state.attachments.map((a) => a.name).join(", ");
+    appendAssistantBubble(`<div style="font-size:12px;color:var(--text-3);">📎 Attached: ${escHtml(names)}</div>`);
   }
 
   updateSessionMeta(session);
-  persistSessions();
-  renderSessionsList();
+  saveSessions();
+  renderSessions();
+  updateChatTitle(session);
 
-  const assistant = addMessageBubble(el.chat, {
-    role: "assistant",
-    label: "Zenith",
-    html: `<span class="dots" aria-label="Zenith is thinking"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`,
-    streaming: true,
-  });
+  // Thinking indicator
+  const bodyEl = appendAssistantBubble(
+    `<span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>`
+  );
 
   setBusy(true);
-  state.abort = new AbortController();
   state.stopRequested = false;
-
   const t0 = performance.now();
+
   try {
     const reply = await sendChatToServer({
       messages: session.messages,
       systemPersona: PERSONAS[state.personaId],
       attachments: state.attachments,
     });
-    if (state.stopRequested) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
 
-    renderAssistantMarkdown(assistant.body, reply);
-    session.messages.push({ role: "assistant", content: reply, ts: Date.now(), tokens: estTokens(reply) });
+    if (state.stopRequested) throw Object.assign(new Error("Stopped"), { name: "AbortError" });
+
+    renderMarkdown(bodyEl, reply);
+    session.messages.push({ role: "assistant", content: reply, ts: Date.now() });
     updateSessionMeta(session);
-    persistSessions();
-    renderSessionsList();
+    saveSessions();
+    renderSessions();
+    updateChatTitle(session);
     clearAttachments();
   } catch (e) {
-    const isAbort = state.stopRequested || String(e?.name || "").toLowerCase().includes("abort");
-    if (isAbort) {
-      assistant.body.innerHTML = `<div class="text-xs text-white/60">Stopped.</div>`;
+    const aborted = state.stopRequested || e?.name === "AbortError";
+    if (aborted) {
+      bodyEl.innerHTML = `<span style="font-size:12px;color:var(--text-3);">Stopped.</span>`;
     } else {
       const msg = String(e?.message || e);
-      assistant.body.innerHTML =
-        `<div class="text-rose-200 text-sm">Generation failed.</div>` +
-        `<div class="mt-2 text-xs text-white/60">${escHtml(msg)}</div>`;
-      setConnectionStatus(el, "warn", "Service error");
+      bodyEl.innerHTML = `<div style="color:var(--danger);margin-bottom:6px;font-size:13px;">Generation failed.</div><div style="font-size:12px;color:var(--text-2);">${escHtml(msg)}</div>`;
+      setStatus("warn", "Error");
       el.servicePanel.classList.remove("hidden");
-      setServerStatus(msg.includes("Missing GEMINI_API_KEY") ? "Owner action: set GEMINI_API_KEY in Vercel → Project → Settings → Environment Variables, then redeploy." : msg, "warn");
+      setServerMsg(msg, "warn");
     }
   } finally {
     setBusy(false);
-    state.abort = null;
     state.stopRequested = false;
-    ensureAtBottom(el.chat);
-  }
-
-  const dt = Math.round(performance.now() - t0);
-  // Keep a tiny “elapsed since app open” for a subtle sense of continuity
-  if (el.statElapsed) el.statElapsed.textContent = formatElapsed(Date.now() - state.startedAt);
-  void dt;
-}
-
-function stopGeneration() {
-  state.stopRequested = true;
-  if (state.abort) {
-    try {
-      state.abort.abort();
-    } catch {}
+    scrollBottom();
+    const dt = Math.round(performance.now() - t0);
+    if (el.statElapsed) el.statElapsed.textContent = formatElapsed(Date.now() - state.startedAt);
   }
 }
 
-// Sidebar drawer
-el.openSidebar?.addEventListener("click", () => sidebarOpen({ sidebar: el.sidebar, drawerBackdrop: el.drawerBackdrop }, true));
-el.closeSidebar?.addEventListener("click", () => sidebarOpen({ sidebar: el.sidebar, drawerBackdrop: el.drawerBackdrop }, false));
-el.drawerBackdrop?.addEventListener("click", () => sidebarOpen({ sidebar: el.sidebar, drawerBackdrop: el.drawerBackdrop }, false));
+// ─── Clear current chat ────────────────────────────────────────────
+function clearCurrentChat() {
+  const s = getActive();
+  if (!s) return;
+  if (s.messages.length === 0) return;
+  if (!confirm("Clear this chat?")) return;
+  s.messages = [];
+  s.messageCount = 0;
+  s.title = "New chat";
+  s.updatedAt = Date.now();
+  saveSessions();
+  renderSessions();
+  renderChat(s);
+  updateChatTitle(s);
+}
 
-// Composer
+// ─── New chat (only when user clicks) ─────────────────────────────
+function handleNewChat() {
+  // If the current active session is already empty, just stay on it
+  const cur = getActive();
+  if (cur && cur.messages.length === 0) {
+    sidebarClose();
+    el.prompt.focus();
+    return;
+  }
+  const s = createSession();
+  state.activeId = s.id;
+  saveSessions();
+  renderSessions();
+  renderChat(s);
+  updateChatTitle(s);
+  clearAttachments();
+  sidebarClose();
+  el.prompt.focus();
+}
+
+// ─── Init sessions ─────────────────────────────────────────────────
+function initSessions() {
+  loadSessions();
+  if (state.sessions.length === 0) {
+    const s = createSession();
+    state.activeId = s.id;
+    saveSessions();
+  } else {
+    state.activeId = state.sessions[0].id;
+  }
+  renderSessions();
+  renderChat(getActive());
+  updateChatTitle(getActive());
+}
+
+// ─── Event bindings ────────────────────────────────────────────────
+el.openSidebar?.addEventListener("click", sidebarOpen);
+el.closeSidebar?.addEventListener("click", sidebarClose);
+el.backdrop?.addEventListener("click", sidebarClose);
+
 el.prompt.addEventListener("input", autoSize);
 el.prompt.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-  if (e.key === "Escape") stopGeneration();
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  if (e.key === "Escape") { state.stopRequested = true; }
 });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") stopGeneration();
-});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") state.stopRequested = true; });
 
 el.sendBtn.addEventListener("click", sendMessage);
-el.stopBtn.addEventListener("click", stopGeneration);
+el.stopBtn.addEventListener("click", () => { state.stopRequested = true; });
 
-// Attachments
 el.attachBtn.addEventListener("click", () => el.fileInput.click());
-el.fileInput.addEventListener("change", async () => {
-  await addAttachmentsFromFileList(el.fileInput.files);
-});
+el.fileInput.addEventListener("change", () => handleFiles(el.fileInput.files));
+
+// Drag & drop onto chat
 el.chat.addEventListener("dragover", (e) => e.preventDefault());
-el.chat.addEventListener("drop", async (e) => {
+el.chat.addEventListener("drop", (e) => {
   e.preventDefault();
-  if (e.dataTransfer?.files?.length) await addAttachmentsFromFileList(e.dataTransfer.files);
+  if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
 });
 
-// Sessions
-el.newSessionBtn.addEventListener("click", () => {
-  createSession();
-  switchSession(state.activeSessionId);
-});
+el.newSessionBtn.addEventListener("click", handleNewChat);
+el.clearChatBtn.addEventListener("click", clearCurrentChat);
 
-// Export
-el.copyMdBtn.addEventListener("click", async () => {
-  const session = getActiveSession();
-  const md = buildExportMarkdown(session?.messages || []);
-  try {
-    await navigator.clipboard.writeText(md);
-    el.copyMdBtn.textContent = "Copied";
-    setTimeout(() => (el.copyMdBtn.textContent = "Copy"), 900);
-  } catch {
-    el.copyMdBtn.textContent = "Denied";
-    setTimeout(() => (el.copyMdBtn.textContent = "Copy"), 900);
-  }
-});
-el.downloadMdBtn.addEventListener("click", () => {
-  const session = getActiveSession();
-  downloadExport(session?.messages || []);
-});
-
-// Persona
-loadPersona();
 el.personaSelect.addEventListener("change", () => {
   savePersona(el.personaSelect.value);
-  const session = getActiveSession();
-  if (session) {
-    session.personaId = state.personaId;
-    updateSessionMeta(session);
-    persistSessions();
-    renderSessionsList();
-  }
+  const s = getActive();
+  if (s) { s.personaId = state.personaId; saveSessions(); }
 });
 
-// Service
-el.serverTestBtn.addEventListener("click", async () => {
-  setServerStatus("Checking…", "info");
+el.copyMdBtn.addEventListener("click", async () => {
+  const md = buildExportMarkdown(getActive()?.messages || []);
   try {
-    const health = await serverHealthCheck();
-    el.servicePanel.classList.toggle("hidden", !!health?.ok);
-    setConnectionStatus(el, health?.ok ? "ok" : "warn", health?.ok ? "Online" : "Needs setup");
-    setServerStatus(health?.ok ? "Service is ready." : "Missing GEMINI_API_KEY env var.", health?.ok ? "ok" : "warn");
+    await navigator.clipboard.writeText(md);
+    el.copyMdBtn.textContent = "Copied!";
+  } catch { el.copyMdBtn.textContent = "Error"; }
+  setTimeout(() => (el.copyMdBtn.textContent = "Copy MD"), 1200);
+});
+
+el.downloadMdBtn.addEventListener("click", () => downloadExport(getActive()?.messages || []));
+
+el.serverTestBtn.addEventListener("click", async () => {
+  setServerMsg("Checking…");
+  try {
+    const h = await serverHealthCheck();
+    el.servicePanel.classList.toggle("hidden", !!h?.ok);
+    setStatus(h?.ok ? "ok" : "warn", h?.ok ? "Online" : "Needs setup");
+    setServerMsg(h?.ok ? "Service is ready." : "Missing OPENROUTER_API_KEY.", h?.ok ? "ok" : "warn");
   } catch (e) {
     el.servicePanel.classList.remove("hidden");
-    setConnectionStatus(el, "warn", "Offline");
-    setServerStatus(String(e?.message || e), "bad");
+    setStatus("warn", "Offline");
+    setServerMsg(String(e?.message || e), "bad");
   }
 });
 
-// Init
+// ─── Bootstrap ─────────────────────────────────────────────────────
+loadPersona();
 autoSize();
-setBusy(false);
-setConnectionStatus(el, "ok", "Online");
-loadSessions();
+initSessions();
+setStatus("ok", "Online");
 
 // Quiet health check
 (async () => {
   try {
     const h = await serverHealthCheck();
-    if (!h?.ok) el.servicePanel.classList.remove("hidden");
-    else el.servicePanel.classList.add("hidden");
+    if (!h?.ok) {
+      el.servicePanel.classList.remove("hidden");
+      setStatus("warn", "Needs setup");
+      setServerMsg("Set OPENROUTER_API_KEY in Vercel → Settings → Environment Variables, then redeploy.", "warn");
+    } else {
+      el.servicePanel.classList.add("hidden");
+    }
   } catch {
     el.servicePanel.classList.remove("hidden");
-    setConnectionStatus(el, "warn", "Offline");
-    setServerStatus("Service unreachable. If you're on Vercel, ensure env var GEMINI_API_KEY is set and redeploy.", "warn");
+    setStatus("warn", "Offline");
+    setServerMsg("Service unreachable. Check OPENROUTER_API_KEY in Vercel environment variables.", "warn");
   }
 })();
-
