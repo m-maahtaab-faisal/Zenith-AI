@@ -5,6 +5,9 @@ import { renderMarkdown } from "./markdown.js";
 import { sendChatToServer, serverHealthCheck } from "./api.js";
 import { parseFiles, chipLabel } from "./attachments.js";
 
+// Allow index.html to detect that the app JS loaded successfully.
+globalThis.__ZENITH_APP_JS_LOADED__ = true;
+
 if (typeof globalThis.marked !== "undefined" && typeof globalThis.marked.setOptions === "function") {
   globalThis.marked.setOptions({ gfm: true, breaks: true });
 }

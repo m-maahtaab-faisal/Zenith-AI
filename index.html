@@ -42,6 +42,30 @@
 
     <!-- DOCX parser -->
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.7.2/mammoth.browser.min.js"></script>
+
+    <script>
+      // If the module script fails to load (cached old JS, blocked CDN, etc.),
+      // the UI would remain on "Connecting…". This provides a clear fallback.
+      window.__ZENITH_APP_JS_LOADED__ = false;
+      window.addEventListener("load", () => {
+        setTimeout(() => {
+          if (window.__ZENITH_APP_JS_LOADED__) return;
+          const connText = document.getElementById("connText");
+          const connDot = document.getElementById("connDot");
+          const statusPill = document.getElementById("statusPill");
+          const servicePanel = document.getElementById("servicePanel");
+          const serverStatus = document.getElementById("serverStatus");
+          if (connText) connText.textContent = "App failed to load";
+          if (connDot) connDot.className = "status-dot warn";
+          if (statusPill) statusPill.textContent = "Attention";
+          if (servicePanel) servicePanel.classList.remove("hidden");
+          if (serverStatus) {
+            serverStatus.className = "text-xs text-red-400 mb-2";
+            serverStatus.textContent = "Frontend JS didn't start. Hard refresh (Ctrl+Shift+R) or open the site in a new tab.";
+          }
+        }, 1500);
+      });
+    </script>
   </head>
 
   <body>
