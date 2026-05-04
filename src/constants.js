@@ -1,4 +1,5 @@
-export const MODEL = "meta-llama/llama-4-scout:free";
+// Use OpenRouter's free router to avoid breakage when a specific :free model is unavailable.
+export const MODEL = "openrouter/free";
 
 export const PERSONAS = {
   general:

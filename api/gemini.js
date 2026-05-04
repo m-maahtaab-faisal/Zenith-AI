@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "meta-llama/llama-4-scout:free";
+const DEFAULT_MODEL = "openrouter/free";
 const DEFAULT_PERSONA =
   "You are Zenith, a general-purpose AI assistant. Be accurate, helpful, and concise. Ask a brief clarifying question only when necessary. Use clear structure and provide actionable next steps.";
 

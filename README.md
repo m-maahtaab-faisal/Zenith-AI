@@ -41,6 +41,6 @@ A clean, fast AI chat interface powered by OpenRouter. Deploy to Vercel in one c
 
 ## Model
 
-Default: `meta-llama/llama-4-scout:free` (OpenRouter)
+Default: `openrouter/free` (OpenRouter free router)
 
 Change in `src/constants.js` → `MODEL`.
