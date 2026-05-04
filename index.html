@@ -47,6 +47,19 @@
       // If the module script fails to load (cached old JS, blocked CDN, etc.),
       // the UI would remain on "Connecting…". This provides a clear fallback.
       window.__ZENITH_APP_JS_LOADED__ = false;
+      window.__ZENITH_LAST_ERROR__ = "";
+      window.addEventListener("error", (e) => {
+        try {
+          const msg = e?.message || e?.error?.message || String(e);
+          window.__ZENITH_LAST_ERROR__ = msg;
+        } catch {}
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        try {
+          const msg = e?.reason?.message || String(e?.reason || e);
+          window.__ZENITH_LAST_ERROR__ = msg;
+        } catch {}
+      });
       window.addEventListener("load", () => {
         setTimeout(() => {
           if (window.__ZENITH_APP_JS_LOADED__) return;
@@ -61,7 +74,9 @@
           if (servicePanel) servicePanel.classList.remove("hidden");
           if (serverStatus) {
             serverStatus.className = "text-xs text-red-400 mb-2";
-            serverStatus.textContent = "Frontend JS didn't start. Hard refresh (Ctrl+Shift+R) or open the site in a new tab.";
+            const extra = window.__ZENITH_LAST_ERROR__ ? ` (Error: ${window.__ZENITH_LAST_ERROR__})` : "";
+            serverStatus.textContent =
+              "Frontend JS didn't start. Hard refresh (Ctrl+Shift+R) or open the site in a new tab." + extra;
           }
         }, 1500);
       });
