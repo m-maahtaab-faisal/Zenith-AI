@@ -28,25 +28,41 @@ function buildMessages(persona, messages, attachments) {
 
   for (const m of messages || []) {
     if (!m?.content) continue;
-    if (m.role === "user" || m.role === "assistant")
+    if (m.role === "user" || m.role === "assistant") {
       result.push({ role: m.role, content: String(m.content) });
+    }
   }
 
   // Attach files to last user message
   if (attachments?.length) {
     const idx = result.map((m) => m.role).lastIndexOf("user");
     if (idx >= 0) {
-      let extra = "\n\nThe user has attached the following files — use them to answer:\n";
+      let extraText = "\n\nThe user attached the following files. Use them to answer:\n";
+      const imageParts = [];
+
       for (const a of attachments) {
         if (!a) continue;
         if (a.kind === "text") {
-          extra += `\n---\n[File: ${a.name}${a.note ? ` — ${a.note}` : ""}]\n${a.text || ""}\n---\n`;
+          extraText += `\n---\n[File: ${a.name}${a.note ? ` — ${a.note}` : ""}]\n${a.text || ""}\n---\n`;
         } else if (a.kind === "image") {
-          // Most free OpenRouter models don't support vision; describe what was attached
-          extra += `\n[Image attached: "${a.name}" — Note: analyze it if the model supports vision, otherwise acknowledge it.]`;
+          const mime = a.mime || "image/png";
+          if (a.dataBase64) {
+            imageParts.push({
+              type: "image_url",
+              image_url: { url: `data:${mime};base64,${a.dataBase64}` },
+            });
+          } else {
+            extraText += `\n[Image attached: "${a.name}"]`;
+          }
         }
       }
-      result[idx].content += extra;
+
+      if (imageParts.length) {
+        const base = String(result[idx].content || "");
+        result[idx].content = [{ type: "text", text: base + extraText }, ...imageParts];
+      } else {
+        result[idx].content = String(result[idx].content || "") + extraText;
+      }
     }
   }
 
@@ -55,18 +71,37 @@ function buildMessages(persona, messages, attachments) {
 
 export default async function handler(req, res) {
   const method = req.method?.toUpperCase();
-  if (method === "OPTIONS") { cors(res); res.statusCode = 204; res.end(); return; }
-  if (method !== "POST") { json(res, 405, { error: "Method not allowed" }); return; }
+  if (method === "OPTIONS") {
+    cors(res);
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+  if (method !== "POST") {
+    json(res, 405, { error: "Method not allowed" });
+    return;
+  }
 
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) { json(res, 503, { error: "Missing OPENROUTER_API_KEY env var" }); return; }
+  if (!apiKey) {
+    json(res, 503, { error: "Missing OPENROUTER_API_KEY env var" });
+    return;
+  }
 
   let payload;
-  try { payload = await readBody(req); }
-  catch { json(res, 400, { error: "Invalid JSON" }); return; }
+  try {
+    payload = await readBody(req);
+  } catch {
+    json(res, 400, { error: "Invalid JSON" });
+    return;
+  }
 
-  const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : DEFAULT_MODEL;
-  const persona = typeof payload.systemPersona === "string" && payload.systemPersona.trim() ? payload.systemPersona.trim() : DEFAULT_PERSONA;
+  const model =
+    typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : DEFAULT_MODEL;
+  const persona =
+    typeof payload.systemPersona === "string" && payload.systemPersona.trim()
+      ? payload.systemPersona.trim()
+      : DEFAULT_PERSONA;
   const messages = buildMessages(persona, payload.messages || [], payload.attachments || []);
 
   try {
@@ -74,7 +109,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         "HTTP-Referer": "https://zenith-ai.vercel.app",
         "X-Title": "Zenith AI",
       },
@@ -82,10 +117,14 @@ export default async function handler(req, res) {
     });
 
     const data = await r.json().catch(() => null);
-    if (!r.ok) { json(res, r.status, { error: "OpenRouter error", details: data }); return; }
+    if (!r.ok) {
+      json(res, r.status, { error: "OpenRouter error", details: data });
+      return;
+    }
 
     json(res, 200, { text: data?.choices?.[0]?.message?.content || "" });
   } catch (e) {
     json(res, 500, { error: "Server exception", message: String(e?.message || e) });
   }
 }
+
